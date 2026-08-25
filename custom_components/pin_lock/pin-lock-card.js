@@ -38,23 +38,42 @@ class PinLockCard extends HTMLElement {
   }
 
   async _subscribeEvents() {
+    if (this._unsub || this._subscribing) return;
+    this._subscribing = true;
     try {
-      this._unsub = await this._hass.connection.subscribeEvents((ev) => {
-        if (ev.data && ev.data.entry_id === this._config.entry_id) {
-          this._onResult(ev.data);
-        }
-      }, "pin_lock_result");
+      this._unsub = await this._hass.connection.subscribeMessage(
+        (ev) => {
+          const data = ev && ev.data ? ev.data : {};
+          if (data.entry_id === this._config.entry_id) {
+            this._onResult(data);
+          }
+        },
+        { type: "subscribe_events", event_type: "pin_lock_result" }
+      );
     } catch (e) {
-      // silencioso
+      this._subscribing = false;
     }
   }
 
   disconnectedCallback() {
-    if (this._unsub) this._unsub();
+    if (this._unsub) {
+      this._unsub();
+      this._unsub = null;
+    }
     if (this._statusTimer) clearTimeout(this._statusTimer);
   }
 
+  connectedCallback() {
+    if (this._hass && !this._unsub) {
+      this._subscribeEvents();
+    }
+  }
+
   _onResult(data) {
+    if (this._checkTimeout) {
+      clearTimeout(this._checkTimeout);
+      this._checkTimeout = null;
+    }
     if (data.result === "ok") {
       this._setStatus("ok");
     } else if (data.result === "locked") {
@@ -82,12 +101,11 @@ class PinLockCard extends HTMLElement {
 
   _press(digit) {
     if (this._status === "locked") return;
-    if (this._pin.length >= this._config.pin_length) return;
+    // Límite máximo de dígitos (usa pin_length como tope, pero no autovalida)
+    const maxLen = this._config.max_length || this._config.pin_length || 8;
+    if (this._pin.length >= maxLen) return;
     this._pin += digit;
     this._render();
-    if (this._pin.length === this._config.pin_length) {
-      this._submit();
-    }
   }
 
   _backspace() {
@@ -96,9 +114,22 @@ class PinLockCard extends HTMLElement {
   }
 
   async _submit() {
+    if (this._status === "locked") return;
     const pin = this._pin;
+    if (!pin || pin.length === 0) return;
     this._status = "checking";
     this._render();
+
+    // Timeout de seguridad: si no llega el evento en 3s, salir de "comprobando"
+    if (this._checkTimeout) clearTimeout(this._checkTimeout);
+    this._checkTimeout = setTimeout(() => {
+      if (this._status === "checking") {
+        this._status = "idle";
+        this._pin = "";
+        this._render();
+      }
+    }, 3000);
+
     try {
       await this._hass.callService("pin_lock", "validate", {
         entry_id: this._config.entry_id,
@@ -121,8 +152,6 @@ class PinLockCard extends HTMLElement {
       return;
     }
 
-    const len = c.pin_length;
-
     const dotColor =
       this._status === "ok"
         ? "var(--success-color, #2e8b57)"
@@ -130,12 +159,17 @@ class PinLockCard extends HTMLElement {
         ? "var(--error-color, #d84343)"
         : "var(--primary-color, #3f87d8)";
 
-    const dots = Array.from({ length: len }, (_, i) => {
-      const filled = i < this._pin.length;
-      return `<span class="dot ${filled ? "filled" : ""}" style="${
-        filled ? `background:${dotColor};border-color:${dotColor};` : ""
-      }"></span>`;
-    }).join("");
+    // Puntos dinámicos: uno por cada dígito tecleado (longitud libre).
+    // Si no hay nada tecleado, mostramos un guion tenue como indicador.
+    const count = this._pin.length;
+    let dots;
+    if (count === 0) {
+      dots = `<span class="empty">— — — —</span>`;
+    } else {
+      dots = Array.from({ length: count }, () => {
+        return `<span class="dot filled" style="background:${dotColor};border-color:${dotColor};"></span>`;
+      }).join("");
+    }
 
     let statusText = c.name;
     let statusClass = "";
@@ -172,8 +206,9 @@ class PinLockCard extends HTMLElement {
         .status { font-size:12px; color: var(--secondary-text-color); }
         .status.ok { color: var(--success-color, #2e8b57); }
         .status.fail { color: var(--error-color, #d84343); }
-        .dots { display:flex; justify-content:center; gap:10px; margin:6px 0 16px; }
+        .dots { display:flex; justify-content:center; align-items:center; gap:10px; margin:6px 0 16px; min-height:14px; }
         .dot { width:12px; height:12px; border-radius:50%; border:1.5px solid var(--divider-color, #bbb); box-sizing:border-box; transition: all 0.15s; }
+        .empty { color: var(--secondary-text-color); letter-spacing:2px; font-size:14px; }
         .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
         .key {
           aspect-ratio:1; font-size:20px; border:1px solid var(--divider-color, #ddd);
@@ -303,8 +338,8 @@ class PinLockCardEditor extends HTMLElement {
           <input id="icon" type="text" value="${c.icon || ""}" />
         </div>
         <div class="row">
-          <label>Longitud del PIN</label>
-          <input id="pin_length" type="number" min="4" max="8" value="${c.pin_length || 4}" />
+          <label>Longitud máxima del PIN</label>
+          <input id="pin_length" type="number" min="4" max="12" value="${c.pin_length || 8}" />
         </div>
       </div>
     `;
