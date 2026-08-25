@@ -19,11 +19,12 @@ Incluye:
 
 ## Registrar la card como recurso
 
-La card (`pin-lock-card.js`) se descarga junto al repo. Añádela como recurso:
+**No hace falta hacer nada.** Desde la versión 1.2.0, la integración sirve y
+registra la card automáticamente al configurarse. Tras instalar y reiniciar,
+la card `pin-lock-card` estará disponible en el selector de tarjetas.
 
-1. *Ajustes → Paneles de control → Recursos → Añadir recurso*.
-2. URL: `/hacsfiles/ha-pin-lock/pin-lock-card.js`
-3. Tipo: **Módulo JavaScript**.
+Si por algún motivo no apareciera, puedes añadirla manualmente como recurso:
+URL `/pin_lock/pin-lock-card.js`, tipo **Módulo JavaScript**.
 
 ## Configurar un candado PIN
 
