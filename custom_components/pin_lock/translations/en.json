@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PIN Lock",
+        "description": "Configure a PIN-protected action.",
+        "data": {
+          "name": "Name",
+          "pin": "PIN code (digits only, min 4)",
+          "target_entity": "Entity to control",
+          "action": "Action when PIN is correct"
+        }
+      }
+    },
+    "error": {
+      "invalid_pin": "The PIN must be at least 4 digits and contain only numbers."
+    },
+    "abort": {
+      "already_configured": "This PIN lock is already configured."
+    }
+  },
+  "selector": {
+    "action": {
+      "options": {
+        "toggle": "Toggle",
+        "turn_on": "Turn on",
+        "turn_off": "Turn off"
+      }
+    }
+  }
+}

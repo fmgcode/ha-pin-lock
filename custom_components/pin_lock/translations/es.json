@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PIN Lock",
+        "description": "Configura una acción protegida por PIN.",
+        "data": {
+          "name": "Nombre",
+          "pin": "Código PIN (solo dígitos, mínimo 4)",
+          "target_entity": "Entidad a controlar",
+          "action": "Acción cuando el PIN es correcto"
+        }
+      }
+    },
+    "error": {
+      "invalid_pin": "El PIN debe tener al menos 4 dígitos y contener solo números."
+    },
+    "abort": {
+      "already_configured": "Este candado PIN ya está configurado."
+    }
+  },
+  "selector": {
+    "action": {
+      "options": {
+        "toggle": "Alternar",
+        "turn_on": "Encender",
+        "turn_off": "Apagar"
+      }
+    }
+  }
+}
