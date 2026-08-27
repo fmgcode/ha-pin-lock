@@ -8,15 +8,22 @@ class PinLockCard extends HTMLElement {
   }
 
   setConfig(config) {
+    const prevEntryId = this._config && this._config.entry_id;
     this._config = {
       name: "Garaje",
       icon: "mdi:garage",
       display_mode: "keypad",
-      status_entity: "",
       ...config,
     };
     // En modo tile arranca plegado; en modo keypad siempre expandido
     this._expanded = this._config.display_mode !== "tile";
+
+    // El estado de la puerta (status_entity) ya no se configura en la card:
+    // se obtiene automáticamente del candado elegido en "entry_id".
+    if (this._config.entry_id !== prevEntryId) {
+      this._meta = null;
+      if (this._hass) this._loadMeta();
+    }
   }
 
   static getConfigElement() {
@@ -44,12 +51,14 @@ class PinLockCard extends HTMLElement {
     }
 
     if (first) {
+      this._loadMeta();
       this._render();
       return;
     }
 
     // Re-render si cambió el estado del sensor de puerta que estamos mostrando
-    const statusEnt = this._config && this._config.status_entity;
+    // (el sensor lo indica el propio candado, obtenido vía _loadMeta)
+    const statusEnt = this._meta && this._meta.status_entity;
     if (statusEnt) {
       const prevSt = prev && prev.states ? prev.states[statusEnt] : null;
       const newSt = hass.states ? hass.states[statusEnt] : null;
@@ -59,6 +68,22 @@ class PinLockCard extends HTMLElement {
         this._render();
       }
     }
+  }
+
+  async _loadMeta() {
+    if (!this._hass || !this._config || !this._config.entry_id) {
+      this._meta = null;
+      return;
+    }
+    try {
+      const res = await this._hass.callWS({ type: "pin_lock/list" });
+      const entries = (res && res.entries) || [];
+      this._meta =
+        entries.find((e) => e.entry_id === this._config.entry_id) || null;
+    } catch (e) {
+      this._meta = null;
+    }
+    this._render();
   }
 
   getCardSize() {
@@ -160,6 +185,15 @@ class PinLockCard extends HTMLElement {
     if (this._status === "locked") return;
     const pin = this._pin;
     if (!pin || pin.length === 0) return;
+    await this._callValidate(pin);
+  }
+
+  async _confirmSubmit() {
+    if (this._status === "locked" || this._status === "checking") return;
+    await this._callValidate("");
+  }
+
+  async _callValidate(pin) {
     this._status = "checking";
     this._render();
 
@@ -185,13 +219,14 @@ class PinLockCard extends HTMLElement {
 
   _doorState() {
     const c = this._config;
-    if (!c.status_entity) return null;
-    const st = this._hass.states[c.status_entity];
+    const statusEntity = this._meta && this._meta.status_entity;
+    if (!statusEntity) return null;
+    const st = this._hass.states[statusEntity];
     if (!st || ["unknown", "unavailable"].includes(st.state)) {
       return { open: null, text: "—", color: "var(--secondary-text-color)" };
     }
     const isOn = st.state === "on";
-    // Texto: personalizado > estado amigable de HA > por defecto
+    // Texto: personalizado (en la card) > estado amigable de HA > por defecto
     let text;
     if (isOn && c.text_open) text = c.text_open;
     else if (!isOn && c.text_closed) text = c.text_closed;
@@ -202,7 +237,7 @@ class PinLockCard extends HTMLElement {
       text = friendly || (isOn ? "Abierto" : "Cerrado");
     }
     const color = isOn
-      ? c.color_open || "var(--error-color, #d84343)"
+      ? c.color_open || "var(--secondary-text-color)"
       : c.color_closed || "var(--success-color, #2e8b57)";
     return { open: isOn, text, color };
   }
@@ -247,6 +282,38 @@ class PinLockCard extends HTMLElement {
     `;
   }
 
+  _escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  _confirmHtml(confirmText, statusText, statusClass, showCancel) {
+    const resultColor =
+      statusClass === "ok"
+        ? "var(--success-color, #2e8b57)"
+        : statusClass === "fail"
+        ? "var(--error-color, #d84343)"
+        : "var(--secondary-text-color)";
+
+    const resultHtml = statusText
+      ? `<div class="pin-result" style="color:${resultColor};">${statusText}</div>`
+      : `<div class="pin-result placeholder">&nbsp;</div>`;
+
+    const cancelBtn = showCancel
+      ? `<button class="btn cancel" data-key="cancel">Cancelar</button>`
+      : "";
+
+    return `
+      <div class="confirm-text">${this._escapeHtml(confirmText)}</div>
+      <div class="confirm-actions">
+        ${cancelBtn}
+        <button class="btn confirm" data-key="confirm">Confirmar</button>
+      </div>
+      ${resultHtml}
+    `;
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
     const c = this._config;
@@ -285,6 +352,11 @@ class PinLockCard extends HTMLElement {
     const door = this._doorState();
     const isTile = c.display_mode === "tile";
     const expanded = this._expanded;
+    // Mientras se cargan los metadatos del candado, se asume que requiere
+    // PIN (comportamiento previo, evita mostrar el panel equivocado un instante)
+    const requiresPin = !this._meta || this._meta.requires_pin !== false;
+    const confirmText =
+      (this._meta && this._meta.confirm_text) || "¿Estás seguro?";
 
     // Subtítulo del header: SIEMPRE el estado de la puerta (si hay sensor
     // configurado). El resultado del PIN va aparte, bajo el teclado.
@@ -305,15 +377,24 @@ class PinLockCard extends HTMLElement {
         </div>
         ${
           isTile
-            ? `<ha-icon class="chev" icon="${expanded ? "mdi:chevron-up" : "mdi:lock"}" style="--mdc-icon-size:18px;"></ha-icon>`
+            ? `<ha-icon class="chev" icon="${
+                expanded
+                  ? "mdi:chevron-up"
+                  : requiresPin
+                  ? "mdi:lock"
+                  : "mdi:gesture-tap"
+              }" style="--mdc-icon-size:18px;"></ha-icon>`
             : ""
         }
       </div>
     `;
 
-    const showKeypad = !isTile || expanded;
-    const keypadBlock = showKeypad
-      ? `<div class="keypad ${isTile ? "in-tile" : ""}">${this._keypadHtml(dotColor, statusText, statusClass)}</div>`
+    const showBody = !isTile || expanded;
+    const bodyInner = requiresPin
+      ? this._keypadHtml(dotColor, statusText, statusClass)
+      : this._confirmHtml(confirmText, statusText, statusClass, isTile);
+    const keypadBlock = showBody
+      ? `<div class="keypad ${isTile ? "in-tile" : ""}">${bodyInner}</div>`
       : "";
 
     this.shadowRoot.innerHTML = `
@@ -327,6 +408,13 @@ class PinLockCard extends HTMLElement {
         .status { font-size:12px; margin-top:1px; }
         .pin-result { text-align:center; font-size:12px; font-weight:600; margin-top:12px; min-height:16px; }
         .pin-result.placeholder { visibility:hidden; }
+        .confirm-text { font-size:14px; color: var(--primary-text-color); text-align:center; padding: 4px 4px 16px; line-height:1.4; }
+        .confirm-actions { display:flex; gap:10px; }
+        .btn { flex:1; padding:12px; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer; border:1px solid var(--divider-color, #ddd); transition: background 0.1s; }
+        .btn:active { transform: scale(0.98); }
+        .btn.confirm { background: var(--primary-color, #3f87d8); color: #fff; border-color: transparent; }
+        .btn.cancel { background: transparent; color: var(--secondary-text-color); }
+        .btn.cancel:hover { background: rgba(0,0,0,0.04); }
         .chev { color: var(--secondary-text-color); flex-shrink:0; }
         .keypad.in-tile { margin-top:14px; padding-top:14px; border-top:0.5px solid var(--divider-color, #e0e0e0); }
         .dots { display:flex; justify-content:center; align-items:center; gap:10px; margin:6px 0 16px; min-height:14px; }
@@ -368,6 +456,19 @@ class PinLockCard extends HTMLElement {
         else this._press(k);
       });
     });
+
+    this.shadowRoot.querySelectorAll(".btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const k = btn.getAttribute("data-key");
+        if (k === "cancel") {
+          this._expanded = false;
+          this._render();
+        } else if (k === "confirm") {
+          this._confirmSubmit();
+        }
+      });
+    });
   }
 }
 
@@ -395,8 +496,8 @@ class PinLockCardEditor extends HTMLElement {
 
   async _loadEntries() {
     try {
-      const all = await this._hass.callWS({ type: "config_entries/get" });
-      this._entries = (all || []).filter((e) => e.domain === "pin_lock");
+      const res = await this._hass.callWS({ type: "pin_lock/list" });
+      this._entries = (res && res.entries) || [];
     } catch (e) {
       this._entries = [];
     }
@@ -428,12 +529,14 @@ class PinLockCardEditor extends HTMLElement {
     const options = this._entries
       .map(
         (e) =>
-          `<option value="${e.entry_id}" ${c.entry_id === e.entry_id ? "selected" : ""}>${e.title || e.entry_id}</option>`
+          `<option value="${e.entry_id}" ${c.entry_id === e.entry_id ? "selected" : ""}>${e.name || e.entry_id}</option>`
       )
       .join("");
 
     const noEntries = this._entries.length === 0;
     const isTile = c.display_mode === "tile";
+    const selectedEntry = this._entries.find((e) => e.entry_id === c.entry_id);
+    const hasStatusEntity = !!(selectedEntry && selectedEntry.status_entity);
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -446,6 +549,7 @@ class PinLockCardEditor extends HTMLElement {
           font-size:0.9rem; width:100%; box-sizing:border-box;
         }
         .hint { font-size:0.78rem; color: var(--secondary-text-color); }
+        .hint code { background: rgba(0,0,0,0.06); padding:1px 5px; border-radius:4px; font-size:0.76rem; }
         .warn { font-size:0.82rem; color: var(--error-color,#d84343); }
         .section { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--secondary-text-color); font-weight:700; margin-top:6px; border-top:1px solid var(--divider-color,#eee); padding-top:10px; }
         .cols { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -461,6 +565,13 @@ class PinLockCardEditor extends HTMLElement {
               : `<select id="entry_id"><option value="">— Selecciona —</option>${options}</select>`
           }
           <div class="hint">Elige el candado que has configurado en la integración.</div>
+          ${
+            selectedEntry
+              ? selectedEntry.requires_pin === false
+                ? `<div class="hint">Este candado no pide PIN, solo confirmación. El texto se configura en Ajustes → Dispositivos y servicios → PIN Lock → este candado → Configurar.</div>`
+                : `<div class="hint">Este candado pide PIN.</div>`
+              : ""
+          }
         </div>
         <div class="row">
           <label>Modo de visualización</label>
@@ -478,18 +589,25 @@ class PinLockCardEditor extends HTMLElement {
           <input id="icon" type="text" value="${c.icon || ""}" />
         </div>
 
-        <div class="section">Estado de puerta (opcional)</div>
+        <div class="section">Estado de puerta</div>
         <div class="row">
-          <label>Sensor de estado (binary_sensor)</label>
-          <div id="slot-status_entity"></div>
-          <div class="hint">Muestra abierto/cerrado en el tile. Déjalo vacío si no lo quieres.</div>
+          ${
+            !c.entry_id
+              ? `<div class="hint">Selecciona un candado para ver si tiene un sensor de puerta asociado.</div>`
+              : hasStatusEntity
+              ? `<div class="hint">Sensor asociado: <code>${selectedEntry.status_entity}</code>. Se configura desde Ajustes → Dispositivos y servicios → PIN Lock → este candado → Configurar.</div>`
+              : `<div class="hint">Este candado no tiene sensor de puerta asociado. Añádelo desde Ajustes → Dispositivos y servicios → PIN Lock → este candado → Configurar.</div>`
+          }
         </div>
+        ${
+          hasStatusEntity
+            ? `
         <div class="cols">
           <div class="row">
             <label>Color abierto</label>
             <div class="color-row">
-              <input id="color_open" type="color" value="${c.color_open || "#d84343"}" />
-              <input id="color_open_txt" type="text" value="${c.color_open || ""}" placeholder="#d84343" />
+              <input id="color_open" type="color" value="${c.color_open || "#9e9e9e"}" />
+              <input id="color_open_txt" type="text" value="${c.color_open || ""}" placeholder="por defecto: gris" />
             </div>
           </div>
           <div class="row">
@@ -509,7 +627,9 @@ class PinLockCardEditor extends HTMLElement {
             <label>Texto cerrado</label>
             <input id="text_closed" type="text" value="${c.text_closed || ""}" placeholder="Cerrado" />
           </div>
-        </div>
+        </div>`
+            : ""
+        }
       </div>
     `;
 
@@ -518,11 +638,13 @@ class PinLockCardEditor extends HTMLElement {
       entrySel.addEventListener("change", (e) => {
         const id = e.target.value;
         this._update("entry_id", id);
-        // Autocompletar el nombre con el título del candado si está vacío
+        // Autocompletar el nombre con el del candado si está vacío
         const found = this._entries.find((x) => x.entry_id === id);
         if (found && (!this._config.name || this._config.name === "Garaje")) {
-          this._update("name", found.title);
+          this._update("name", found.name);
         }
+        // Re-render para actualizar el aviso de sensor de puerta asociado
+        this._render();
       });
     }
 
@@ -538,20 +660,6 @@ class PinLockCardEditor extends HTMLElement {
         this._update("display_mode", e.target.value);
         this._render();
       });
-
-    // Entity picker para el sensor de estado
-    const slot = this.shadowRoot.getElementById("slot-status_entity");
-    if (slot && this._hass) {
-      const picker = document.createElement("ha-entity-picker");
-      picker.hass = this._hass;
-      picker.value = c.status_entity || "";
-      picker.includeDomains = ["binary_sensor"];
-      picker.allowCustomEntity = false;
-      picker.addEventListener("value-changed", (e) =>
-        this._update("status_entity", e.detail.value)
-      );
-      slot.appendChild(picker);
-    }
 
     // Colores: sincronizar el selector de color con su input de texto
     const bindColor = (colorId, txtId, key) => {

@@ -3,20 +3,52 @@
     "step": {
       "user": {
         "title": "PIN Lock",
-        "description": "Configure a PIN-protected action.",
+        "description": "Configure a PIN-protected or confirmation-protected action.",
         "data": {
           "name": "Name",
-          "pin": "PIN code (digits only, min 4)",
-          "target_entity": "Entity to control",
-          "action": "Action when PIN is correct"
+          "target_entity": "Entity to control (actuator)",
+          "status_entity": "Status sensor (optional)",
+          "action": "Action when validated",
+          "require_pin": "Require PIN",
+          "pin": "PIN code (required if 'Require PIN' is on)",
+          "confirm_text": "Confirmation text (if PIN is NOT required)",
+          "notify_enabled": "Notify a device",
+          "notify_target": "Device to notify",
+          "notify_title": "Notification title",
+          "notify_message": "Notification message"
         }
       }
     },
     "error": {
-      "invalid_pin": "The PIN must be at least 4 digits and contain only numbers."
+      "invalid_pin": "The PIN must be at least 4 digits and contain only numbers.",
+      "missing_pin": "Enter a PIN of at least 4 digits, or turn off 'Require PIN'."
     },
     "abort": {
       "already_configured": "This PIN lock is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit PIN Lock",
+        "description": "Leave the PIN blank to keep the current one.",
+        "data": {
+          "target_entity": "Entity to control (actuator)",
+          "status_entity": "Status sensor (optional)",
+          "action": "Action when validated",
+          "require_pin": "Require PIN",
+          "pin": "New PIN (optional if one exists already, leave blank to keep it)",
+          "confirm_text": "Confirmation text (if PIN is NOT required)",
+          "notify_enabled": "Notify a device",
+          "notify_target": "Device to notify",
+          "notify_title": "Notification title",
+          "notify_message": "Notification message"
+        }
+      }
+    },
+    "error": {
+      "invalid_pin": "The PIN must be at least 4 digits and contain only numbers.",
+      "missing_pin": "Enter a PIN of at least 4 digits, or turn off 'Require PIN'."
     }
   },
   "selector": {

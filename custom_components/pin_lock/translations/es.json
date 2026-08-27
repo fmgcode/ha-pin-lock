@@ -3,20 +3,52 @@
     "step": {
       "user": {
         "title": "PIN Lock",
-        "description": "Configura una acción protegida por PIN.",
+        "description": "Configura una acción protegida por PIN o por confirmación.",
         "data": {
           "name": "Nombre",
-          "pin": "Código PIN (solo dígitos, mínimo 4)",
-          "target_entity": "Entidad a controlar",
-          "action": "Acción cuando el PIN es correcto"
+          "target_entity": "Entidad a controlar (actuador)",
+          "status_entity": "Sensor de estado (opcional)",
+          "action": "Acción cuando se valida",
+          "require_pin": "Requiere PIN",
+          "pin": "Código PIN (obligatorio si 'Requiere PIN' está activado)",
+          "confirm_text": "Texto de confirmación (si NO requiere PIN)",
+          "notify_enabled": "Notificar a un dispositivo",
+          "notify_target": "Dispositivo a notificar",
+          "notify_title": "Título de la notificación",
+          "notify_message": "Mensaje de la notificación"
         }
       }
     },
     "error": {
-      "invalid_pin": "El PIN debe tener al menos 4 dígitos y contener solo números."
+      "invalid_pin": "El PIN debe tener al menos 4 dígitos y contener solo números.",
+      "missing_pin": "Indica un PIN de al menos 4 dígitos, o desactiva 'Requiere PIN'."
     },
     "abort": {
       "already_configured": "Este candado PIN ya está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Editar candado PIN Lock",
+        "description": "Deja el PIN en blanco para mantener el actual.",
+        "data": {
+          "target_entity": "Entidad a controlar (actuador)",
+          "status_entity": "Sensor de estado (opcional)",
+          "action": "Acción cuando se valida",
+          "require_pin": "Requiere PIN",
+          "pin": "Nuevo PIN (opcional si ya tenía uno, deja en blanco para no cambiarlo)",
+          "confirm_text": "Texto de confirmación (si NO requiere PIN)",
+          "notify_enabled": "Notificar a un dispositivo",
+          "notify_target": "Dispositivo a notificar",
+          "notify_title": "Título de la notificación",
+          "notify_message": "Mensaje de la notificación"
+        }
+      }
+    },
+    "error": {
+      "invalid_pin": "El PIN debe tener al menos 4 dígitos y contener solo números.",
+      "missing_pin": "Indica un PIN de al menos 4 dígitos, o desactiva 'Requiere PIN'."
     }
   },
   "selector": {
