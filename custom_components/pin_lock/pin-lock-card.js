@@ -15,8 +15,8 @@ class PinLockCard extends HTMLElement {
       display_mode: "keypad",
       ...config,
     };
-    // En modo tile arranca plegado; en modo keypad siempre expandido
-    this._expanded = this._config.display_mode !== "tile";
+    // El modal (para modo tile) siempre arranca cerrado
+    this._modalOpen = false;
 
     // El estado de la puerta (status_entity) ya no se configura en la card:
     // se obtiene automáticamente del candado elegido en "entry_id".
@@ -88,9 +88,9 @@ class PinLockCard extends HTMLElement {
 
   getCardSize() {
     const isTile = this._config && this._config.display_mode === "tile";
-    // Tile plegado: solo cabecera (pequeño). Con teclado visible: más alto.
-    if (isTile && !this._expanded) return 1;
-    return 5;
+    // Modo tile: siempre compacto, el teclado se abre en un modal flotante
+    // que no ocupa espacio del grid. Modo keypad: teclado siempre visible.
+    return isTile ? 1 : 5;
   }
 
   async _subscribeEvents() {
@@ -131,12 +131,10 @@ class PinLockCard extends HTMLElement {
       this._checkTimeout = null;
     }
     if (data.result === "ok") {
-      // Éxito: limpiar y, si estamos en modo tile desplegado, replegar
+      // Éxito: limpiar y cerrar el modal si estaba abierto (modo tile)
       this._pin = "";
       this._status = "idle";
-      if (this._config.display_mode === "tile") {
-        this._expanded = false;
-      }
+      this._modalOpen = false;
       this._render();
     } else if (data.result === "locked") {
       this._pin = "";
@@ -189,11 +187,10 @@ class PinLockCard extends HTMLElement {
   }
 
   /**
-   * Envío para candados sin PIN (confirmación nativa). A diferencia de
-   * `_submit()`, NO pasa por el estado "checking": la confirmación nativa
-   * ya fue el "¿estás seguro?", así que mostrar además un "Comprobando…"
-   * duplicaría el paso de espera sin aportar nada (tampoco lo hace el
-   * `confirmation` nativo de Lovelace).
+   * Envío para candados sin PIN (confirmación simple). A diferencia de
+   * `_submit()`, NO pasa por el estado "checking": la confirmación ya fue
+   * el "¿estás seguro?", así que mostrar además un "Comprobando…"
+   * duplicaría el paso de espera sin aportar nada.
    */
   async _confirmSubmit() {
     if (this._confirmPending) return;
@@ -208,42 +205,6 @@ class PinLockCard extends HTMLElement {
     } finally {
       this._confirmPending = false;
     }
-  }
-
-  /**
-   * Abre el mismo diálogo de confirmación nativo que usa HA para
-   * `tap_action.confirmation` en cards nativas. No es una API pública
-   * documentada: se basa en el evento `show-dialog` que el gestor de
-   * diálogos de HA escucha en el árbol del DOM (patrón usado por cards de
-   * la comunidad como button-card o mushroom desde hace años). Si en algún
-   * momento HA cambiara ese contrato interno, el evento simplemente no
-   * tendría efecto (no rompe la card, solo dejaría de abrir el diálogo).
-   */
-  _showNativeConfirm(text) {
-    return new Promise((resolve) => {
-      const event = new CustomEvent("show-dialog", {
-        bubbles: true,
-        composed: true,
-        detail: {
-          dialogTag: "dialog-box",
-          dialogImport: () => Promise.resolve(),
-          dialogParams: {
-            text,
-            confirmText: "Confirmar",
-            dismissText: "Cancelar",
-            confirmation: true,
-            confirm: () => resolve(true),
-            cancel: () => resolve(false),
-          },
-        },
-      });
-      this.dispatchEvent(event);
-    });
-  }
-
-  async _handleConfirmTap(confirmText) {
-    const ok = await this._showNativeConfirm(confirmText);
-    if (ok) await this._confirmSubmit();
   }
 
   async _callValidate(pin) {
@@ -326,7 +287,7 @@ class PinLockCard extends HTMLElement {
 
     const resultHtml = statusText
       ? `<div class="pin-result" style="color:${resultColor};">${statusText}</div>`
-      : `<div class="pin-result placeholder">&nbsp;</div>`;
+      : "";
 
     return `
       <div class="dots">${dots}</div>
@@ -341,7 +302,7 @@ class PinLockCard extends HTMLElement {
     return div.innerHTML;
   }
 
-  _confirmHtml(confirmText, statusText, statusClass) {
+  _confirmHtml(confirmText, statusText, statusClass, inModal) {
     const resultColor =
       statusClass === "ok"
         ? "var(--success-color, #2e8b57)"
@@ -351,11 +312,18 @@ class PinLockCard extends HTMLElement {
 
     const resultHtml = statusText
       ? `<div class="pin-result" style="color:${resultColor};">${statusText}</div>`
-      : `<div class="pin-result placeholder">&nbsp;</div>`;
+      : "";
+
+    const cancelBtn = inModal
+      ? `<button class="btn cancel" data-key="cancel">Cancelar</button>`
+      : "";
 
     return `
       <div class="confirm-caption">${this._escapeHtml(confirmText)}</div>
-      <button class="btn confirm full" data-key="confirm-native">Confirmar</button>
+      <div class="confirm-actions">
+        ${cancelBtn}
+        <button class="btn confirm" data-key="confirm">Confirmar</button>
+      </div>
       ${resultHtml}
     `;
   }
@@ -397,7 +365,6 @@ class PinLockCard extends HTMLElement {
 
     const door = this._doorState();
     const isTile = c.display_mode === "tile";
-    const expanded = this._expanded;
     // Mientras se cargan los metadatos del candado, se asume que requiere
     // PIN (comportamiento previo, evita mostrar el panel equivocado un instante)
     const requiresPin = !this._meta || this._meta.requires_pin !== false;
@@ -412,14 +379,8 @@ class PinLockCard extends HTMLElement {
     // Color del icono: si hay puerta, sigue su color; si no, neutro
     const iconColor = door ? door.color : "var(--primary-text-color)";
 
-    // En modo tile, la cabecera es "clicable" en dos casos:
-    // - con PIN: pulsar despliega/repliega el teclado.
-    // - sin PIN: pulsar abre directamente el diálogo nativo de confirmación
-    //   (no hay nada que desplegar, el candado no tiene teclado).
-    const headerClickable = isTile;
-
     const header = `
-      <div class="head ${headerClickable ? "clickable" : ""}">
+      <div class="head ${isTile ? "clickable" : ""}">
         <div class="icon-box" style="color:${iconColor}; background:${door ? `color-mix(in srgb, ${door.color} 14%, transparent)` : "rgba(0,0,0,0.06)"};">
           <ha-icon icon="${c.icon}" style="--mdc-icon-size:22px;"></ha-icon>
         </div>
@@ -429,32 +390,44 @@ class PinLockCard extends HTMLElement {
         </div>
         ${
           isTile
-            ? `<ha-icon class="chev" icon="${
-                requiresPin
-                  ? expanded
-                    ? "mdi:chevron-up"
-                    : "mdi:lock"
-                  : "mdi:gesture-tap"
-              }" style="--mdc-icon-size:18px;"></ha-icon>`
+            ? `<ha-icon class="chev" icon="${requiresPin ? "mdi:lock" : "mdi:gesture-tap"}" style="--mdc-icon-size:18px;"></ha-icon>`
             : ""
         }
       </div>
     `;
 
-    // Cuerpo de la card:
-    // - PIN + tile: teclado, solo si está desplegado.
-    // - PIN + keypad: teclado siempre.
-    // - sin PIN + tile: nada (pulsar el tile abre el diálogo nativo directo).
-    // - sin PIN + keypad: un botón que abre el mismo diálogo nativo.
-    let keypadBlock = "";
-    if (requiresPin) {
-      const showBody = !isTile || expanded;
-      if (showBody) {
-        keypadBlock = `<div class="keypad ${isTile ? "in-tile" : ""}">${this._keypadHtml(dotColor, statusText, statusClass)}</div>`;
-      }
-    } else if (!isTile) {
-      keypadBlock = `<div class="keypad">${this._confirmHtml(confirmText, statusText, statusClass)}</div>`;
-    }
+    // Cuerpo de la card, según modo:
+    // - "tile": el tile SIEMPRE es compacto (nunca crece); al pulsarlo se
+    //   abre un modal propio (position:fixed) con el teclado o el panel de
+    //   confirmación. El modal no ocupa espacio del grid del dashboard.
+    // - "keypad": todo se muestra siempre inline, tamaño fijo, sin modal.
+    const bodyInner = requiresPin
+      ? this._keypadHtml(dotColor, statusText, statusClass)
+      : this._confirmHtml(confirmText, statusText, statusClass, isTile);
+
+    const inlineBlock = !isTile
+      ? `<div class="keypad">${bodyInner}</div>`
+      : "";
+
+    const modalBlock =
+      isTile && this._modalOpen
+        ? `
+      <div class="overlay">
+        <div class="overlay-panel">
+          <button class="overlay-close" data-key="close" aria-label="Cerrar">
+            <ha-icon icon="mdi:close" style="--mdc-icon-size:18px;"></ha-icon>
+          </button>
+          <div class="overlay-title">
+            <div class="icon-box" style="color:${iconColor}; background:${door ? `color-mix(in srgb, ${door.color} 14%, transparent)` : "rgba(0,0,0,0.06)"};">
+              <ha-icon icon="${c.icon}" style="--mdc-icon-size:20px;"></ha-icon>
+            </div>
+            <div class="name">${c.name}</div>
+          </div>
+          ${bodyInner}
+        </div>
+      </div>
+    `
+        : "";
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -466,14 +439,15 @@ class PinLockCard extends HTMLElement {
         .name { font-size:15px; font-weight:500; color: var(--primary-text-color); }
         .status { font-size:12px; margin-top:1px; }
         .pin-result { text-align:center; font-size:12px; font-weight:600; margin-top:12px; min-height:16px; }
-        .pin-result.placeholder { visibility:hidden; }
         .confirm-caption { font-size:14px; color: var(--primary-text-color); text-align:center; padding: 4px 4px 16px; line-height:1.4; }
-        .btn { padding:12px; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer; border:1px solid var(--divider-color, #ddd); transition: background 0.1s; }
+        .confirm-actions { display:flex; gap:10px; }
+        .btn { flex:1; padding:12px; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer; border:1px solid var(--divider-color, #ddd); transition: background 0.1s; }
         .btn:active { transform: scale(0.98); }
         .btn.confirm { background: var(--primary-color, #3f87d8); color: #fff; border-color: transparent; }
-        .btn.full { width:100%; box-sizing:border-box; }
+        .btn.cancel { background: transparent; color: var(--secondary-text-color); }
+        .btn.cancel:hover { background: rgba(0,0,0,0.04); }
         .chev { color: var(--secondary-text-color); flex-shrink:0; }
-        .keypad.in-tile { margin-top:14px; padding-top:14px; border-top:0.5px solid var(--divider-color, #e0e0e0); }
+        .keypad { margin-top:14px; }
         .dots { display:flex; justify-content:center; align-items:center; gap:10px; margin:6px 0 16px; min-height:14px; }
         .dot { width:12px; height:12px; border-radius:50%; border:1.5px solid var(--divider-color, #bbb); box-sizing:border-box; transition: all 0.15s; }
         .empty { color: var(--secondary-text-color); letter-spacing:2px; font-size:14px; }
@@ -486,26 +460,63 @@ class PinLockCard extends HTMLElement {
         .key:hover { background: rgba(0,0,0,0.04); }
         .key:active { transform: scale(0.96); }
         .key.sub { font-size:16px; color: var(--secondary-text-color); }
+        .overlay {
+          position: fixed; inset: 0; z-index: 1000;
+          background: rgba(0,0,0,0.5);
+          display: flex; align-items: center; justify-content: center;
+          padding: 16px; box-sizing: border-box;
+        }
+        .overlay-panel {
+          position: relative;
+          background: var(--card-background-color, #fff);
+          border-radius: 16px; padding: 20px;
+          width: 100%; max-width: 320px;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+        }
+        .overlay-close {
+          position: absolute; top: 10px; right: 10px;
+          background: none; border: none; cursor: pointer;
+          color: var(--secondary-text-color); padding: 4px; line-height: 0;
+        }
+        .overlay-title { display:flex; align-items:center; gap:12px; margin-bottom: 4px; }
       </style>
       <ha-card>
         ${header}
-        ${keypadBlock}
+        ${inlineBlock}
       </ha-card>
+      ${modalBlock}
     `;
 
-    // Click en la cabecera (solo modo tile)
+    // Click en la cabecera (solo modo tile): abre el modal
     if (isTile) {
       const head = this.shadowRoot.querySelector(".head");
       if (head)
         head.addEventListener("click", () => {
-          if (requiresPin) {
-            this._expanded = !this._expanded;
-            if (!this._expanded) this._pin = "";
-            this._render();
-          } else {
-            this._handleConfirmTap(confirmText);
-          }
+          this._modalOpen = true;
+          this._render();
         });
+    }
+
+    // Click en el fondo del modal: cerrar sin hacer nada
+    const overlay = this.shadowRoot.querySelector(".overlay");
+    if (overlay) {
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) {
+          this._modalOpen = false;
+          this._pin = "";
+          this._render();
+        }
+      });
+    }
+
+    const closeBtn = this.shadowRoot.querySelector(".overlay-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._modalOpen = false;
+        this._pin = "";
+        this._render();
+      });
     }
 
     this.shadowRoot.querySelectorAll(".key").forEach((btn) => {
@@ -518,12 +529,20 @@ class PinLockCard extends HTMLElement {
       });
     });
 
+    // Botones Cancelar/Confirmar del panel de confirmación: en ambos casos
+    // se cierra al instante (si estaba en modal), evitando poder pulsar dos
+    // veces. Confirmar además dispara la acción en segundo plano.
     this.shadowRoot.querySelectorAll(".btn").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const k = btn.getAttribute("data-key");
-        if (k === "confirm-native") {
-          this._handleConfirmTap(confirmText);
+        if (k === "cancel") {
+          this._modalOpen = false;
+          this._render();
+        } else if (k === "confirm") {
+          this._modalOpen = false;
+          this._render();
+          this._confirmSubmit();
         }
       });
     });
