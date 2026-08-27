@@ -11,7 +11,6 @@ class PinLockCard extends HTMLElement {
     this._config = {
       name: "Garaje",
       icon: "mdi:garage",
-      pin_length: 8,
       display_mode: "keypad",
       status_entity: "",
       ...config,
@@ -29,21 +28,43 @@ class PinLockCard extends HTMLElement {
       entry_id: "",
       name: "Garaje",
       icon: "mdi:garage",
-      pin_length: 8,
       display_mode: "keypad",
     };
   }
 
   set hass(hass) {
-    const first = !this._hass;
+    const prev = this._hass;
+    const first = !prev;
     this._hass = hass;
-    if (first) {
+
+    // Si aún no hay suscripción activa (primera carga o un intento anterior
+    // falló), reintentar en cada actualización de hass hasta conseguirla.
+    if (!this._unsub) {
       this._subscribeEvents();
+    }
+
+    if (first) {
       this._render();
+      return;
+    }
+
+    // Re-render si cambió el estado del sensor de puerta que estamos mostrando
+    const statusEnt = this._config && this._config.status_entity;
+    if (statusEnt) {
+      const prevSt = prev && prev.states ? prev.states[statusEnt] : null;
+      const newSt = hass.states ? hass.states[statusEnt] : null;
+      const prevVal = prevSt ? prevSt.state : null;
+      const newVal = newSt ? newSt.state : null;
+      if (prevVal !== newVal) {
+        this._render();
+      }
     }
   }
 
   getCardSize() {
+    const isTile = this._config && this._config.display_mode === "tile";
+    // Tile plegado: solo cabecera (pequeño). Con teclado visible: más alto.
+    if (isTile && !this._expanded) return 1;
     return 5;
   }
 
@@ -85,29 +106,38 @@ class PinLockCard extends HTMLElement {
       this._checkTimeout = null;
     }
     if (data.result === "ok") {
-      this._setStatus("ok");
+      // Éxito: limpiar y, si estamos en modo tile desplegado, replegar
+      this._pin = "";
+      this._status = "idle";
+      if (this._config.display_mode === "tile") {
+        this._expanded = false;
+      }
+      this._render();
     } else if (data.result === "locked") {
+      this._pin = "";
       this._setStatus("locked", data.retry_in);
     } else if (data.result === "fail") {
+      this._pin = "";
       this._setStatus("fail");
     } else {
+      this._pin = "";
       this._setStatus("error");
     }
-    this._pin = "";
   }
 
   _setStatus(status, extra) {
     this._status = status;
     this._extra = extra;
     this._render();
-    if (this._statusTimer) clearTimeout(this._statusTimer);
-    if (status !== "locked") {
+    if (this._statusTimer) {
+      clearTimeout(this._statusTimer);
+      this._statusTimer = null;
+    }
+    // Solo para estados de error/fail: mostrar mensaje 1,5s y volver a idle
+    if (status === "fail" || status === "error") {
       this._statusTimer = setTimeout(() => {
         this._status = "idle";
-        // En modo tile, tras un PIN correcto se repliega el teclado
-        if (status === "ok" && this._config.display_mode === "tile") {
-          this._expanded = false;
-        }
+        this._statusTimer = null;
         this._render();
       }, 1500);
     }
@@ -115,9 +145,8 @@ class PinLockCard extends HTMLElement {
 
   _press(digit) {
     if (this._status === "locked") return;
-    // Límite máximo de dígitos (usa pin_length como tope, pero no autovalida)
-    const maxLen = this._config.max_length || this._config.pin_length || 8;
-    if (this._pin.length >= maxLen) return;
+    // Tope técnico razonable (nunca se alcanza en uso real)
+    if (this._pin.length >= 20) return;
     this._pin += digit;
     this._render();
   }
@@ -200,9 +229,21 @@ class PinLockCard extends HTMLElement {
       })
       .join("");
 
+    const resultColor =
+      statusClass === "ok"
+        ? "var(--success-color, #2e8b57)"
+        : statusClass === "fail"
+        ? "var(--error-color, #d84343)"
+        : "var(--secondary-text-color)";
+
+    const resultHtml = statusText
+      ? `<div class="pin-result" style="color:${resultColor};">${statusText}</div>`
+      : `<div class="pin-result placeholder">&nbsp;</div>`;
+
     return `
       <div class="dots">${dots}</div>
       <div class="grid">${keysHtml}</div>
+      ${resultHtml}
     `;
   }
 
@@ -245,28 +286,13 @@ class PinLockCard extends HTMLElement {
     const isTile = c.display_mode === "tile";
     const expanded = this._expanded;
 
-    // Subtítulo del tile: estado del teclado tiene prioridad si está activo,
-    // si no, el estado de la puerta, si no, nada.
-    let subtitle = "";
-    let subtitleColor = "var(--secondary-text-color)";
-    if (statusText) {
-      subtitle = statusText;
-      subtitleColor =
-        statusClass === "ok"
-          ? "var(--success-color, #2e8b57)"
-          : statusClass === "fail"
-          ? "var(--error-color, #d84343)"
-          : "var(--secondary-text-color)";
-    } else if (door) {
-      subtitle = door.text;
-      subtitleColor = door.color;
-    }
+    // Subtítulo del header: SIEMPRE el estado de la puerta (si hay sensor
+    // configurado). El resultado del PIN va aparte, bajo el teclado.
+    const subtitle = door ? door.text : "";
+    const subtitleColor = door ? door.color : "var(--secondary-text-color)";
 
     // Color del icono: si hay puerta, sigue su color; si no, neutro
     const iconColor = door ? door.color : "var(--primary-text-color)";
-    const iconBg = door
-      ? "color-mix(in srgb, " + "currentColor 12%, transparent)"
-      : "rgba(0,0,0,0.06)";
 
     const header = `
       <div class="head ${isTile ? "clickable" : ""}">
@@ -299,6 +325,8 @@ class PinLockCard extends HTMLElement {
         .icon-box { width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
         .name { font-size:15px; font-weight:500; color: var(--primary-text-color); }
         .status { font-size:12px; margin-top:1px; }
+        .pin-result { text-align:center; font-size:12px; font-weight:600; margin-top:12px; min-height:16px; }
+        .pin-result.placeholder { visibility:hidden; }
         .chev { color: var(--secondary-text-color); flex-shrink:0; }
         .keypad.in-tile { margin-top:14px; padding-top:14px; border-top:0.5px solid var(--divider-color, #e0e0e0); }
         .dots { display:flex; justify-content:center; align-items:center; gap:10px; margin:6px 0 16px; min-height:14px; }
@@ -449,10 +477,6 @@ class PinLockCardEditor extends HTMLElement {
           <label>Icono (mdi:...)</label>
           <input id="icon" type="text" value="${c.icon || ""}" />
         </div>
-        <div class="row">
-          <label>Longitud máxima del PIN</label>
-          <input id="pin_length" type="number" min="4" max="12" value="${c.pin_length || 8}" />
-        </div>
 
         <div class="section">Estado de puerta (opcional)</div>
         <div class="row">
@@ -507,12 +531,6 @@ class PinLockCardEditor extends HTMLElement {
 
     const iconEl = this.shadowRoot.getElementById("icon");
     if (iconEl) iconEl.addEventListener("change", (e) => this._update("icon", e.target.value));
-
-    const lenEl = this.shadowRoot.getElementById("pin_length");
-    if (lenEl)
-      lenEl.addEventListener("change", (e) =>
-        this._update("pin_length", parseInt(e.target.value, 10) || 4)
-      );
 
     const modeEl = this.shadowRoot.getElementById("display_mode");
     if (modeEl)

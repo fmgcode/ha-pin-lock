@@ -1,11 +1,11 @@
 {
   "domain": "pin_lock",
   "name": "PIN Lock",
-  "codeowners": ["@fmgcode"],
+  "codeowners": ["@tuusuario"],
   "config_flow": true,
-  "documentation": "https://github.com/fmgcode/ha-pin-lock",
+  "documentation": "https://github.com/tuusuario/ha-pin-lock",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/fmgcode/ha-pin-lock/issues",
+  "issue_tracker": "https://github.com/tuusuario/ha-pin-lock/issues",
   "requirements": [],
-  "version": "1.4.0"
+  "version": "1.5.0"
 }

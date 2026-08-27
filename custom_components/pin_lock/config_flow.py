@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 import voluptuous as vol
@@ -26,10 +25,7 @@ from .const import (
     CONF_TARGET_ENTITY,
     DOMAIN,
 )
-
-
-def _hash_pin(pin: str) -> str:
-    return hashlib.sha256(pin.encode()).hexdigest()
+from .util import hash_pin
 
 
 class PinLockConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -53,7 +49,7 @@ class PinLockConfigFlow(ConfigFlow, domain=DOMAIN):
                     title=user_input[CONF_NAME],
                     data={
                         CONF_NAME: user_input[CONF_NAME],
-                        CONF_PIN: _hash_pin(pin),
+                        CONF_PIN: hash_pin(pin),
                         CONF_TARGET_ENTITY: user_input[CONF_TARGET_ENTITY],
                         CONF_ACTION: user_input[CONF_ACTION],
                     },

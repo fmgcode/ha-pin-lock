@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import json
 import logging
 import time
 from pathlib import Path
@@ -27,6 +27,7 @@ from .const import (
     MAX_ATTEMPTS,
     SERVICE_VALIDATE,
 )
+from .util import hash_pin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,9 +39,14 @@ CARD_FILENAME = "pin-lock-card.js"
 _attempts: dict[str, dict] = {}
 
 
-def _hash_pin(pin: str) -> str:
-    """Devuelve el hash SHA-256 de un PIN."""
-    return hashlib.sha256(pin.encode()).hexdigest()
+def _read_manifest_version() -> str | None:
+    """Lee la versión directamente del manifest.json del propio paquete."""
+    manifest_path = Path(__file__).parent / "manifest.json"
+    try:
+        with manifest_path.open(encoding="utf-8") as f:
+            return json.load(f).get("version")
+    except (OSError, ValueError):
+        return None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -77,15 +83,9 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         _LOGGER.warning("No se pudo servir la card: %s", err)
         return
 
-    # Añadir la card como recurso de Lovelace (modo storage)
-    version = None
-    try:
-        integration = hass.data.get("integrations", {}).get(DOMAIN)
-        if integration is not None:
-            version = str(integration.version)
-    except Exception:  # noqa: BLE001
-        version = None
-
+    # Añadir la card como recurso de Lovelace (modo storage), con la versión
+    # del manifest para forzar recarga de caché en cada actualización.
+    version = _read_manifest_version()
     url = f"{CARD_URL}?v={version}" if version else CARD_URL
 
     try:
@@ -154,7 +154,7 @@ async def _async_register_service(hass: HomeAssistant) -> None:
             return
 
         stored_hash = entry.data.get(CONF_PIN)
-        if _hash_pin(pin) == stored_hash:
+        if hash_pin(pin) == stored_hash:
             # PIN correcto: resetear intentos y ejecutar acción
             state["count"] = 0
             await _async_run_action(hass, entry)
