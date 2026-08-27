@@ -188,9 +188,62 @@ class PinLockCard extends HTMLElement {
     await this._callValidate(pin);
   }
 
+  /**
+   * Envío para candados sin PIN (confirmación nativa). A diferencia de
+   * `_submit()`, NO pasa por el estado "checking": la confirmación nativa
+   * ya fue el "¿estás seguro?", así que mostrar además un "Comprobando…"
+   * duplicaría el paso de espera sin aportar nada (tampoco lo hace el
+   * `confirmation` nativo de Lovelace).
+   */
   async _confirmSubmit() {
-    if (this._status === "locked" || this._status === "checking") return;
-    await this._callValidate("");
+    if (this._confirmPending) return;
+    this._confirmPending = true;
+    try {
+      await this._hass.callService("pin_lock", "validate", {
+        entry_id: this._config.entry_id,
+        pin: "",
+      });
+    } catch (e) {
+      this._setStatus("error");
+    } finally {
+      this._confirmPending = false;
+    }
+  }
+
+  /**
+   * Abre el mismo diálogo de confirmación nativo que usa HA para
+   * `tap_action.confirmation` en cards nativas. No es una API pública
+   * documentada: se basa en el evento `show-dialog` que el gestor de
+   * diálogos de HA escucha en el árbol del DOM (patrón usado por cards de
+   * la comunidad como button-card o mushroom desde hace años). Si en algún
+   * momento HA cambiara ese contrato interno, el evento simplemente no
+   * tendría efecto (no rompe la card, solo dejaría de abrir el diálogo).
+   */
+  _showNativeConfirm(text) {
+    return new Promise((resolve) => {
+      const event = new CustomEvent("show-dialog", {
+        bubbles: true,
+        composed: true,
+        detail: {
+          dialogTag: "dialog-box",
+          dialogImport: () => Promise.resolve(),
+          dialogParams: {
+            text,
+            confirmText: "Confirmar",
+            dismissText: "Cancelar",
+            confirmation: true,
+            confirm: () => resolve(true),
+            cancel: () => resolve(false),
+          },
+        },
+      });
+      this.dispatchEvent(event);
+    });
+  }
+
+  async _handleConfirmTap(confirmText) {
+    const ok = await this._showNativeConfirm(confirmText);
+    if (ok) await this._confirmSubmit();
   }
 
   async _callValidate(pin) {
@@ -237,8 +290,8 @@ class PinLockCard extends HTMLElement {
       text = friendly || (isOn ? "Abierto" : "Cerrado");
     }
     const color = isOn
-      ? c.color_open || "var(--secondary-text-color)"
-      : c.color_closed || "var(--success-color, #2e8b57)";
+      ? c.color_open || "var(--error-color, #d84343)"
+      : c.color_closed || "var(--secondary-text-color)";
     return { open: isOn, text, color };
   }
 
@@ -288,7 +341,7 @@ class PinLockCard extends HTMLElement {
     return div.innerHTML;
   }
 
-  _confirmHtml(confirmText, statusText, statusClass, showCancel) {
+  _confirmHtml(confirmText, statusText, statusClass) {
     const resultColor =
       statusClass === "ok"
         ? "var(--success-color, #2e8b57)"
@@ -300,16 +353,9 @@ class PinLockCard extends HTMLElement {
       ? `<div class="pin-result" style="color:${resultColor};">${statusText}</div>`
       : `<div class="pin-result placeholder">&nbsp;</div>`;
 
-    const cancelBtn = showCancel
-      ? `<button class="btn cancel" data-key="cancel">Cancelar</button>`
-      : "";
-
     return `
-      <div class="confirm-text">${this._escapeHtml(confirmText)}</div>
-      <div class="confirm-actions">
-        ${cancelBtn}
-        <button class="btn confirm" data-key="confirm">Confirmar</button>
-      </div>
+      <div class="confirm-caption">${this._escapeHtml(confirmText)}</div>
+      <button class="btn confirm full" data-key="confirm-native">Confirmar</button>
       ${resultHtml}
     `;
   }
@@ -366,8 +412,14 @@ class PinLockCard extends HTMLElement {
     // Color del icono: si hay puerta, sigue su color; si no, neutro
     const iconColor = door ? door.color : "var(--primary-text-color)";
 
+    // En modo tile, la cabecera es "clicable" en dos casos:
+    // - con PIN: pulsar despliega/repliega el teclado.
+    // - sin PIN: pulsar abre directamente el diálogo nativo de confirmación
+    //   (no hay nada que desplegar, el candado no tiene teclado).
+    const headerClickable = isTile;
+
     const header = `
-      <div class="head ${isTile ? "clickable" : ""}">
+      <div class="head ${headerClickable ? "clickable" : ""}">
         <div class="icon-box" style="color:${iconColor}; background:${door ? `color-mix(in srgb, ${door.color} 14%, transparent)` : "rgba(0,0,0,0.06)"};">
           <ha-icon icon="${c.icon}" style="--mdc-icon-size:22px;"></ha-icon>
         </div>
@@ -378,10 +430,10 @@ class PinLockCard extends HTMLElement {
         ${
           isTile
             ? `<ha-icon class="chev" icon="${
-                expanded
-                  ? "mdi:chevron-up"
-                  : requiresPin
-                  ? "mdi:lock"
+                requiresPin
+                  ? expanded
+                    ? "mdi:chevron-up"
+                    : "mdi:lock"
                   : "mdi:gesture-tap"
               }" style="--mdc-icon-size:18px;"></ha-icon>`
             : ""
@@ -389,13 +441,20 @@ class PinLockCard extends HTMLElement {
       </div>
     `;
 
-    const showBody = !isTile || expanded;
-    const bodyInner = requiresPin
-      ? this._keypadHtml(dotColor, statusText, statusClass)
-      : this._confirmHtml(confirmText, statusText, statusClass, isTile);
-    const keypadBlock = showBody
-      ? `<div class="keypad ${isTile ? "in-tile" : ""}">${bodyInner}</div>`
-      : "";
+    // Cuerpo de la card:
+    // - PIN + tile: teclado, solo si está desplegado.
+    // - PIN + keypad: teclado siempre.
+    // - sin PIN + tile: nada (pulsar el tile abre el diálogo nativo directo).
+    // - sin PIN + keypad: un botón que abre el mismo diálogo nativo.
+    let keypadBlock = "";
+    if (requiresPin) {
+      const showBody = !isTile || expanded;
+      if (showBody) {
+        keypadBlock = `<div class="keypad ${isTile ? "in-tile" : ""}">${this._keypadHtml(dotColor, statusText, statusClass)}</div>`;
+      }
+    } else if (!isTile) {
+      keypadBlock = `<div class="keypad">${this._confirmHtml(confirmText, statusText, statusClass)}</div>`;
+    }
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -408,13 +467,11 @@ class PinLockCard extends HTMLElement {
         .status { font-size:12px; margin-top:1px; }
         .pin-result { text-align:center; font-size:12px; font-weight:600; margin-top:12px; min-height:16px; }
         .pin-result.placeholder { visibility:hidden; }
-        .confirm-text { font-size:14px; color: var(--primary-text-color); text-align:center; padding: 4px 4px 16px; line-height:1.4; }
-        .confirm-actions { display:flex; gap:10px; }
-        .btn { flex:1; padding:12px; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer; border:1px solid var(--divider-color, #ddd); transition: background 0.1s; }
+        .confirm-caption { font-size:14px; color: var(--primary-text-color); text-align:center; padding: 4px 4px 16px; line-height:1.4; }
+        .btn { padding:12px; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer; border:1px solid var(--divider-color, #ddd); transition: background 0.1s; }
         .btn:active { transform: scale(0.98); }
         .btn.confirm { background: var(--primary-color, #3f87d8); color: #fff; border-color: transparent; }
-        .btn.cancel { background: transparent; color: var(--secondary-text-color); }
-        .btn.cancel:hover { background: rgba(0,0,0,0.04); }
+        .btn.full { width:100%; box-sizing:border-box; }
         .chev { color: var(--secondary-text-color); flex-shrink:0; }
         .keypad.in-tile { margin-top:14px; padding-top:14px; border-top:0.5px solid var(--divider-color, #e0e0e0); }
         .dots { display:flex; justify-content:center; align-items:center; gap:10px; margin:6px 0 16px; min-height:14px; }
@@ -436,14 +493,18 @@ class PinLockCard extends HTMLElement {
       </ha-card>
     `;
 
-    // Click en la cabecera (solo modo tile): plegar/desplegar
+    // Click en la cabecera (solo modo tile)
     if (isTile) {
       const head = this.shadowRoot.querySelector(".head");
       if (head)
         head.addEventListener("click", () => {
-          this._expanded = !this._expanded;
-          if (!this._expanded) this._pin = "";
-          this._render();
+          if (requiresPin) {
+            this._expanded = !this._expanded;
+            if (!this._expanded) this._pin = "";
+            this._render();
+          } else {
+            this._handleConfirmTap(confirmText);
+          }
         });
     }
 
@@ -461,11 +522,8 @@ class PinLockCard extends HTMLElement {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const k = btn.getAttribute("data-key");
-        if (k === "cancel") {
-          this._expanded = false;
-          this._render();
-        } else if (k === "confirm") {
-          this._confirmSubmit();
+        if (k === "confirm-native") {
+          this._handleConfirmTap(confirmText);
         }
       });
     });
@@ -606,15 +664,15 @@ class PinLockCardEditor extends HTMLElement {
           <div class="row">
             <label>Color abierto</label>
             <div class="color-row">
-              <input id="color_open" type="color" value="${c.color_open || "#9e9e9e"}" />
-              <input id="color_open_txt" type="text" value="${c.color_open || ""}" placeholder="por defecto: gris" />
+              <input id="color_open" type="color" value="${c.color_open || "#d84343"}" />
+              <input id="color_open_txt" type="text" value="${c.color_open || ""}" placeholder="por defecto: rojo" />
             </div>
           </div>
           <div class="row">
             <label>Color cerrado</label>
             <div class="color-row">
-              <input id="color_closed" type="color" value="${c.color_closed || "#2e8b57"}" />
-              <input id="color_closed_txt" type="text" value="${c.color_closed || ""}" placeholder="#2e8b57" />
+              <input id="color_closed" type="color" value="${c.color_closed || "#9e9e9e"}" />
+              <input id="color_closed_txt" type="text" value="${c.color_closed || ""}" placeholder="por defecto: gris" />
             </div>
           </div>
         </div>

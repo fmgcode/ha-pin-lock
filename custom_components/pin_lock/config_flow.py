@@ -76,7 +76,8 @@ def _notify_schema_fields(current: dict) -> dict:
             CONF_NOTIFY_ENABLED, default=current.get(CONF_NOTIFY_ENABLED, False)
         ): BooleanSelector(),
         vol.Optional(
-            CONF_NOTIFY_TARGET, default=current.get(CONF_NOTIFY_TARGET)
+            CONF_NOTIFY_TARGET,
+            description={"suggested_value": current.get(CONF_NOTIFY_TARGET)},
         ): _notify_target_selector(),
         vol.Optional(
             CONF_NOTIFY_TITLE,
@@ -253,7 +254,8 @@ class PinLockOptionsFlow(OptionsFlow):
                     CONF_TARGET_ENTITY, default=current.get(CONF_TARGET_ENTITY)
                 ): _target_selector(),
                 vol.Optional(
-                    CONF_STATUS_ENTITY, default=current.get(CONF_STATUS_ENTITY)
+                    CONF_STATUS_ENTITY,
+                    description={"suggested_value": current.get(CONF_STATUS_ENTITY)},
                 ): _status_selector(),
                 vol.Required(
                     CONF_ACTION, default=current.get(CONF_ACTION, ACTION_TOGGLE)
