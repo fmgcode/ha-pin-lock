@@ -15,7 +15,7 @@ class PinLockCard extends HTMLElement {
       secondary_icon: "mdi:lock",
       ...config,
     };
-    // El modal (para modo tile) siempre arranca cerrado
+    // El modal (teclado o confirmación) siempre arranca cerrado
     this._modalOpen = false;
 
     // El estado de la puerta (status_entity) ya no se configura en la card:
@@ -87,12 +87,10 @@ class PinLockCard extends HTMLElement {
   }
 
   getCardSize() {
-    // Candados sin PIN: tile compacto, la confirmación se abre en un modal
-    // flotante que no ocupa espacio del grid. Candados con PIN: teclado
-    // siempre visible e inline. Mientras no se conoce el candado, se asume
-    // que requiere PIN (igual que en _render).
-    const requiresPin = !this._meta || this._meta.requires_pin !== false;
-    return requiresPin ? 5 : 1;
+    // La card siempre es una tile compacta: el teclado (con PIN) o la
+    // confirmación (sin PIN) se abren en un modal flotante que no ocupa
+    // espacio del grid.
+    return 1;
   }
 
   async _subscribeEvents() {
@@ -133,7 +131,7 @@ class PinLockCard extends HTMLElement {
       this._checkTimeout = null;
     }
     if (data.result === "ok") {
-      // Éxito: limpiar y cerrar el modal si estaba abierto (modo tile)
+      // Éxito: limpiar y cerrar el modal si estaba abierto
       this._pin = "";
       this._status = "idle";
       this._modalOpen = false;
@@ -369,10 +367,6 @@ class PinLockCard extends HTMLElement {
     // Mientras se cargan los metadatos del candado, se asume que requiere
     // PIN (comportamiento previo, evita mostrar el panel equivocado un instante)
     const requiresPin = !this._meta || this._meta.requires_pin !== false;
-    // El modo de visualización no es una preferencia de la card: lo decide
-    // la propia integración. Con PIN, teclado siempre visible e inline. Sin
-    // PIN, tile compacto que abre un modal de confirmación al pulsarlo.
-    const isTile = !requiresPin;
     const confirmText =
       (this._meta && this._meta.confirm_text) || "¿Estás seguro?";
 
@@ -385,38 +379,28 @@ class PinLockCard extends HTMLElement {
     const iconColor = door ? door.color : "var(--primary-text-color)";
 
     const header = `
-      <div class="head ${isTile ? "clickable" : ""}">
+      <div class="head clickable">
         <div class="icon-box" style="color:${iconColor}; background:${door ? `color-mix(in srgb, ${door.color} 14%, transparent)` : "rgba(0,0,0,0.06)"};">
-          <ha-icon icon="${c.icon}" style="--mdc-icon-size:22px;"></ha-icon>
+          <ha-icon icon="${c.icon}" style="--mdc-icon-size:20px;"></ha-icon>
         </div>
         <div class="head-text">
           <div class="name">${c.name}</div>
           ${subtitle ? `<div class="status" style="color:${subtitleColor};">${subtitle}</div>` : ""}
         </div>
-        ${
-          isTile
-            ? `<ha-icon class="chev" icon="${c.secondary_icon || "mdi:lock"}" style="--mdc-icon-size:18px;"></ha-icon>`
-            : ""
-        }
+        <ha-icon class="chev" icon="${c.secondary_icon || "mdi:lock"}" style="--mdc-icon-size:18px;"></ha-icon>
       </div>
     `;
 
-    // Cuerpo de la card, según modo:
-    // - "tile": el tile SIEMPRE es compacto (nunca crece); al pulsarlo se
-    //   abre un modal propio (position:fixed) con el teclado o el panel de
-    //   confirmación. El modal no ocupa espacio del grid del dashboard.
-    // - "keypad": todo se muestra siempre inline, tamaño fijo, sin modal.
+    // La card es siempre una tile compacta de tamaño fijo. Al pulsarla se
+    // abre un modal (position:fixed) con el teclado (candados con PIN) o el
+    // panel de confirmación (candados sin PIN); el modal no ocupa espacio
+    // del grid del dashboard.
     const bodyInner = requiresPin
       ? this._keypadHtml(dotColor, statusText, statusClass)
-      : this._confirmHtml(confirmText, statusText, statusClass, isTile);
+      : this._confirmHtml(confirmText, statusText, statusClass, true);
 
-    const inlineBlock = !isTile
-      ? `<div class="keypad">${bodyInner}</div>`
-      : "";
-
-    const modalBlock =
-      isTile && this._modalOpen
-        ? `
+    const modalBlock = this._modalOpen
+      ? `
       <div class="overlay">
         <div class="overlay-panel">
           <button class="overlay-close" data-key="close" aria-label="Cerrar">
@@ -436,13 +420,15 @@ class PinLockCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        ha-card { padding: 16px; }
-        .head { display:flex; align-items:center; gap:12px; }
+        /* Tamaño fijo pensado para encajar con una tile nativa de HA
+           (~246.4 x 56.4px): padding 8px + icon-box 40px = 56px de alto. */
+        ha-card { padding: 8px 12px; }
+        .head { display:flex; align-items:center; gap:10px; min-height:40px; }
         .head.clickable { cursor:pointer; }
         .head-text { flex:1; min-width:0; }
-        .icon-box { width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-        .name { font-size:15px; font-weight:500; color: var(--primary-text-color); }
-        .status { font-size:12px; margin-top:1px; }
+        .icon-box { width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .name { font-size:15px; font-weight:500; color: var(--primary-text-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .status { font-size:12px; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .pin-result { text-align:center; font-size:12px; font-weight:600; margin-top:12px; min-height:16px; }
         .confirm-caption { font-size:14px; color: var(--primary-text-color); text-align:center; padding: 4px 4px 16px; line-height:1.4; }
         .confirm-actions { display:flex; gap:10px; }
@@ -452,7 +438,6 @@ class PinLockCard extends HTMLElement {
         .btn.cancel { background: transparent; color: var(--secondary-text-color); }
         .btn.cancel:hover { background: rgba(0,0,0,0.04); }
         .chev { color: var(--secondary-text-color); flex-shrink:0; }
-        .keypad { margin-top:14px; }
         .dots { display:flex; justify-content:center; align-items:center; gap:10px; margin:6px 0 16px; min-height:14px; }
         .dot { width:12px; height:12px; border-radius:50%; border:1.5px solid var(--divider-color, #bbb); box-sizing:border-box; transition: all 0.15s; }
         .empty { color: var(--secondary-text-color); letter-spacing:2px; font-size:14px; }
@@ -487,20 +472,17 @@ class PinLockCard extends HTMLElement {
       </style>
       <ha-card>
         ${header}
-        ${inlineBlock}
       </ha-card>
       ${modalBlock}
     `;
 
-    // Click en la cabecera (solo modo tile): abre el modal
-    if (isTile) {
-      const head = this.shadowRoot.querySelector(".head");
-      if (head)
-        head.addEventListener("click", () => {
-          this._modalOpen = true;
-          this._render();
-        });
-    }
+    // Click en la cabecera: abre el modal (teclado o confirmación)
+    const head = this.shadowRoot.querySelector(".head");
+    if (head)
+      head.addEventListener("click", () => {
+        this._modalOpen = true;
+        this._render();
+      });
 
     // Click en el fondo del modal: cerrar sin hacer nada
     const overlay = this.shadowRoot.querySelector(".overlay");
@@ -649,8 +631,8 @@ class PinLockCardEditor extends HTMLElement {
           ${
             selectedEntry
               ? selectedEntry.requires_pin === false
-                ? `<div class="hint">Este candado no pide PIN, solo confirmación: la card se mostrará como un tile compacto que abre un diálogo de confirmación al pulsarlo. El texto se configura en Ajustes → Dispositivos y servicios → PIN Lock → este candado → Configurar.</div>`
-                : `<div class="hint">Este candado pide PIN: la card mostrará el teclado numérico siempre visible.</div>`
+                ? `<div class="hint">Este candado no pide PIN, solo confirmación: al pulsar la tile se abrirá un diálogo de confirmación. El texto se configura en Ajustes → Dispositivos y servicios → PIN Lock → este candado → Configurar.</div>`
+                : `<div class="hint">Este candado pide PIN: al pulsar la tile se abrirá el teclado numérico.</div>`
               : ""
           }
         </div>
@@ -663,9 +645,9 @@ class PinLockCardEditor extends HTMLElement {
           <input id="icon" type="text" value="${c.icon || ""}" />
         </div>
         <div class="row">
-          <label>Icono secundario (candados sin PIN)</label>
+          <label>Icono secundario</label>
           <input id="secondary_icon" type="text" value="${c.secondary_icon || ""}" placeholder="mdi:lock" />
-          <div class="hint">Se muestra junto al nombre en la tile de los candados que solo piden confirmación.</div>
+          <div class="hint">Se muestra junto al nombre en la tile, indicando que al pulsar se pedirá PIN o confirmación.</div>
         </div>
 
         <div class="section">Estado de puerta</div>

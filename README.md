@@ -71,15 +71,16 @@ En el editor visual:
 - **Candado PIN Lock**: desplegable con los candados que hayas configurado.
   Es el único dato "de negocio" que la card necesita — el actuador y el
   sensor de puerta viven en la integración, no aquí.
-  El modo de la card se determina automáticamente según **Requiere PIN** del
-  candado: con PIN, teclado numérico siempre visible; sin PIN, un tile
-  compacto que abre un diálogo de confirmación al pulsarlo.
+  La card siempre se muestra como una **tile compacta** (mismo tamaño que
+  una tile nativa de Home Assistant, ~246x56px), tenga o no PIN el candado.
+  Al pulsarla se abre un modal: con **Requiere PIN** activado, el teclado
+  numérico; si está desactivado, el diálogo de confirmación.
 - **Nombre a mostrar** e **icono**: preferencias visuales de esta card en
   concreto (puedes tener el mismo candado en varias cards con distinto
   nombre/icono si quieres).
-- **Icono secundario** (`secondary_icon`, por defecto `mdi:lock`): solo se
-  usa en candados sin PIN, junto al nombre en la tile, para indicar que al
-  pulsar se pedirá confirmación.
+- **Icono secundario** (`secondary_icon`, por defecto `mdi:lock`): se
+  muestra junto al nombre en la tile, indicando que al pulsar se pedirá
+  PIN o confirmación.
 - **Estado de puerta**: si el candado elegido tiene un sensor asociado, la
   card lo detecta sola y te deja personalizar **colores** y **textos** de
   abierto/cerrado. Si no tiene sensor, este apartado no aparece.
@@ -103,17 +104,20 @@ candado elegido en `entry_id`.)
 
 ## Uso
 
-**Candados con PIN**: se introducen los dígitos del PIN y **se pulsa la V**
-(✓) para validar. La longitud es libre. La tecla ⌫ borra el último dígito.
+Al pulsar la tile se abre un modal flotante:
 
-**Candados sin PIN (solo confirmación)**: la card muestra el texto de
+**Candados con PIN**: el modal muestra el teclado numérico. Se introducen
+los dígitos del PIN y **se pulsa la V** (✓) para validar. La longitud es
+libre. La tecla ⌫ borra el último dígito.
+
+**Candados sin PIN (solo confirmación)**: el modal muestra el texto de
 confirmación configurado y dos botones, **Cancelar** y **Confirmar**. Al
 confirmar, se ejecuta la acción directamente — sin código, igual que el
 `confirmation` nativo de Lovelace, pero pasando por la misma integración
 (con soporte de notificación).
 
-En candados sin PIN, si la acción se ejecuta con éxito el diálogo de
-confirmación se cierra automáticamente.
+En ambos casos, si la acción se ejecuta con éxito el modal se cierra
+automáticamente.
 
 Con PIN, si el código es incorrecto se muestra "Código incorrecto" (en su
 propia línea, bajo el teclado, sin mezclarse con el estado de la puerta) y
