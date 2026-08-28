@@ -8,8 +8,8 @@ Assistant.
 Incluye:
 
 - Una **integración** (`pin_lock`) que valida el PIN y ejecuta la acción.
-- Una **card** (`pin-lock-card`) con teclado numérico y dos modos de
-  visualización.
+- Una **card** (`pin-lock-card`) con teclado numérico o confirmación simple,
+  según lo que exija cada candado.
 - Protección **anti fuerza bruta** (bloqueo temporal tras varios fallos).
 
 ## Instalación con HACS
@@ -71,11 +71,15 @@ En el editor visual:
 - **Candado PIN Lock**: desplegable con los candados que hayas configurado.
   Es el único dato "de negocio" que la card necesita — el actuador y el
   sensor de puerta viven en la integración, no aquí.
-- **Modo de visualización**: teclado siempre visible, o tile que despliega el
-  teclado al pulsarlo.
+  El modo de la card se determina automáticamente según **Requiere PIN** del
+  candado: con PIN, teclado numérico siempre visible; sin PIN, un tile
+  compacto que abre un diálogo de confirmación al pulsarlo.
 - **Nombre a mostrar** e **icono**: preferencias visuales de esta card en
   concreto (puedes tener el mismo candado en varias cards con distinto
   nombre/icono si quieres).
+- **Icono secundario** (`secondary_icon`, por defecto `mdi:lock`): solo se
+  usa en candados sin PIN, junto al nombre en la tile, para indicar que al
+  pulsar se pedirá confirmación.
 - **Estado de puerta**: si el candado elegido tiene un sensor asociado, la
   card lo detecta sola y te deja personalizar **colores** y **textos** de
   abierto/cerrado. Si no tiene sensor, este apartado no aparece.
@@ -85,9 +89,9 @@ En el editor visual:
 ```yaml
 type: custom:pin-lock-card
 entry_id: TU_ENTRY_ID
-display_mode: tile
 name: Garaje
 icon: mdi:garage
+secondary_icon: mdi:lock
 color_open: "#d84343"
 color_closed: "#2e8b57"
 text_open: Abierto
@@ -108,8 +112,8 @@ confirmar, se ejecuta la acción directamente — sin código, igual que el
 `confirmation` nativo de Lovelace, pero pasando por la misma integración
 (con soporte de notificación).
 
-En ambos casos, si la acción se ejecuta con éxito, en modo `tile` el panel
-se repliega automáticamente.
+En candados sin PIN, si la acción se ejecuta con éxito el diálogo de
+confirmación se cierra automáticamente.
 
 Con PIN, si el código es incorrecto se muestra "Código incorrecto" (en su
 propia línea, bajo el teclado, sin mezclarse con el estado de la puerta) y

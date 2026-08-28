@@ -12,7 +12,7 @@ class PinLockCard extends HTMLElement {
     this._config = {
       name: "Garaje",
       icon: "mdi:garage",
-      display_mode: "keypad",
+      secondary_icon: "mdi:lock",
       ...config,
     };
     // El modal (para modo tile) siempre arranca cerrado
@@ -35,7 +35,7 @@ class PinLockCard extends HTMLElement {
       entry_id: "",
       name: "Garaje",
       icon: "mdi:garage",
-      display_mode: "keypad",
+      secondary_icon: "mdi:lock",
     };
   }
 
@@ -87,10 +87,12 @@ class PinLockCard extends HTMLElement {
   }
 
   getCardSize() {
-    const isTile = this._config && this._config.display_mode === "tile";
-    // Modo tile: siempre compacto, el teclado se abre en un modal flotante
-    // que no ocupa espacio del grid. Modo keypad: teclado siempre visible.
-    return isTile ? 1 : 5;
+    // Candados sin PIN: tile compacto, la confirmación se abre en un modal
+    // flotante que no ocupa espacio del grid. Candados con PIN: teclado
+    // siempre visible e inline. Mientras no se conoce el candado, se asume
+    // que requiere PIN (igual que en _render).
+    const requiresPin = !this._meta || this._meta.requires_pin !== false;
+    return requiresPin ? 5 : 1;
   }
 
   async _subscribeEvents() {
@@ -364,10 +366,13 @@ class PinLockCard extends HTMLElement {
     }
 
     const door = this._doorState();
-    const isTile = c.display_mode === "tile";
     // Mientras se cargan los metadatos del candado, se asume que requiere
     // PIN (comportamiento previo, evita mostrar el panel equivocado un instante)
     const requiresPin = !this._meta || this._meta.requires_pin !== false;
+    // El modo de visualización no es una preferencia de la card: lo decide
+    // la propia integración. Con PIN, teclado siempre visible e inline. Sin
+    // PIN, tile compacto que abre un modal de confirmación al pulsarlo.
+    const isTile = !requiresPin;
     const confirmText =
       (this._meta && this._meta.confirm_text) || "¿Estás seguro?";
 
@@ -390,7 +395,7 @@ class PinLockCard extends HTMLElement {
         </div>
         ${
           isTile
-            ? `<ha-icon class="chev" icon="${requiresPin ? "mdi:lock" : "mdi:gesture-tap"}" style="--mdc-icon-size:18px;"></ha-icon>`
+            ? `<ha-icon class="chev" icon="${c.secondary_icon || "mdi:lock"}" style="--mdc-icon-size:18px;"></ha-icon>`
             : ""
         }
       </div>
@@ -611,7 +616,6 @@ class PinLockCardEditor extends HTMLElement {
       .join("");
 
     const noEntries = this._entries.length === 0;
-    const isTile = c.display_mode === "tile";
     const selectedEntry = this._entries.find((e) => e.entry_id === c.entry_id);
     const hasStatusEntity = !!(selectedEntry && selectedEntry.status_entity);
 
@@ -645,17 +649,10 @@ class PinLockCardEditor extends HTMLElement {
           ${
             selectedEntry
               ? selectedEntry.requires_pin === false
-                ? `<div class="hint">Este candado no pide PIN, solo confirmación. El texto se configura en Ajustes → Dispositivos y servicios → PIN Lock → este candado → Configurar.</div>`
-                : `<div class="hint">Este candado pide PIN.</div>`
+                ? `<div class="hint">Este candado no pide PIN, solo confirmación: la card se mostrará como un tile compacto que abre un diálogo de confirmación al pulsarlo. El texto se configura en Ajustes → Dispositivos y servicios → PIN Lock → este candado → Configurar.</div>`
+                : `<div class="hint">Este candado pide PIN: la card mostrará el teclado numérico siempre visible.</div>`
               : ""
           }
-        </div>
-        <div class="row">
-          <label>Modo de visualización</label>
-          <select id="display_mode">
-            <option value="keypad" ${!isTile ? "selected" : ""}>Teclado siempre visible</option>
-            <option value="tile" ${isTile ? "selected" : ""}>Tile que despliega el teclado</option>
-          </select>
         </div>
         <div class="row">
           <label>Nombre a mostrar</label>
@@ -664,6 +661,11 @@ class PinLockCardEditor extends HTMLElement {
         <div class="row">
           <label>Icono (mdi:...)</label>
           <input id="icon" type="text" value="${c.icon || ""}" />
+        </div>
+        <div class="row">
+          <label>Icono secundario (candados sin PIN)</label>
+          <input id="secondary_icon" type="text" value="${c.secondary_icon || ""}" placeholder="mdi:lock" />
+          <div class="hint">Se muestra junto al nombre en la tile de los candados que solo piden confirmación.</div>
         </div>
 
         <div class="section">Estado de puerta</div>
@@ -731,12 +733,11 @@ class PinLockCardEditor extends HTMLElement {
     const iconEl = this.shadowRoot.getElementById("icon");
     if (iconEl) iconEl.addEventListener("change", (e) => this._update("icon", e.target.value));
 
-    const modeEl = this.shadowRoot.getElementById("display_mode");
-    if (modeEl)
-      modeEl.addEventListener("change", (e) => {
-        this._update("display_mode", e.target.value);
-        this._render();
-      });
+    const secondaryIconEl = this.shadowRoot.getElementById("secondary_icon");
+    if (secondaryIconEl)
+      secondaryIconEl.addEventListener("change", (e) =>
+        this._update("secondary_icon", e.target.value)
+      );
 
     // Colores: sincronizar el selector de color con su input de texto
     const bindColor = (colorId, txtId, key) => {
