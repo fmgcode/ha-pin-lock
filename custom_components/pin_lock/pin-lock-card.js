@@ -420,10 +420,12 @@ class PinLockCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        /* Tamaño fijo pensado para encajar con una tile nativa de HA
-           (~246.4 x 56.4px): padding 8px + icon-box 40px = 56px de alto. */
-        ha-card { padding: 8px 12px; }
-        .head { display:flex; align-items:center; gap:10px; min-height:40px; }
+        /* Altura fija igual a la de una tile nativa de HA (56.4px). Se fuerza
+           con height + box-sizing:border-box en vez de calcularla a partir
+           del padding, para no depender de bordes/paddings internos que
+           añade la propia ha-card. */
+        ha-card { box-sizing:border-box; height:56.4px; padding: 8px 12px; overflow:hidden; }
+        .head { display:flex; align-items:center; gap:10px; height:100%; }
         .head.clickable { cursor:pointer; }
         .head-text { flex:1; min-width:0; }
         .icon-box { width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
